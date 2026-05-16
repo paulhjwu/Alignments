@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bible Alignment Viewer</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f7f7fa;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 900px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      padding: 32px 40px;
+    }
+    h1 {
+      text-align: center;
+      color: #2c3e50;
+      margin-bottom: 32px;
+    }
+    .alignment {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: #f2f6fc;
+      border-radius: 8px;
+    }
+    .side {
+      width: 48%;
+    }
+    .tokens {
+      background: #fff;
+      border: 1px solid #e1e4ea;
+      padding: 10px;
+      border-radius: 6px;
+    }
+    @media (max-width: 700px) {
+      .alignment { flex-direction: column; }
+      .side { width: 100%; margin-bottom: 10px; }
+    }
+  </style>
+</head>
+
+<body>
+<div class="container">
+  <h1>Bible Alignment Viewer</h1>
+
+  <label>Alignment JSON:</label><br>
+  <select id="alignmentSelect"></select><br><br>
+
+  <label>Source TSV:</label><br>
+  <select id="sourceSelect"></select><br><br>
+
+  <label>Target TSV:</label><br>
+  <select id="targetSelect"></select><br><br>
+
+  <label>View order:</label>
+  <label><input type="radio" name="viewOrder" value="source" checked> Source</label>
+  <label><input type="radio" name="viewOrder" value="target"> Target</label><br><br>
+
+  <button id="loadBtn">Load Alignment</button>
+
+  <div id="jumpControls" style="display:none; margin-top:20px; padding:12px 16px; background:#f2f6fc; border-radius:8px;">
+    <strong>Jump to:</strong>&nbsp;
+    <select id="bookSelect"></select>&nbsp;
+    Chapter <select id="chapterSelect"></select>&nbsp;
+    Verse <select id="verseSelect"></select>&nbsp;
+    <button id="goBtn">Go</button>
+  </div>
+
+  <div id="output" style="margin-top:30px;"></div>
+</div>
+
+<script>
+/* ---------- Render Helpers ---------- */
+function isPunctuation(text) {
+  return !text || !/[\p{L}\p{N}]/u.test(text);
+}
+
+function renderSourceToken(id, state) {
+  const text = state.sourceById[id] || `[${id}]`;
+  const strongs = state.sourceStrongsById ? (state.sourceStrongsById[id] || '') : '';
+  return strongs
+    ? `<span style="display:inline-block;text-align:center;margin-right:6px">${text}<br><small style="color:#888;font-size:0.8em">${strongs}</small></span>`
+    : `<span style="margin-right:6px">${text}</span>`;
+}
+
+/* ---------- Book Names ---------- */
+const BOOK_NAMES = {
+  '01':'Genesis','02':'Exodus','03':'Leviticus','04':'Numbers','05':'Deuteronomy',
+  '06':'Joshua','07':'Judges','08':'Ruth','09':'1 Samuel','10':'2 Samuel',
+  '11':'1 Kings','12':'2 Kings','13':'1 Chronicles','14':'2 Chronicles','15':'Ezra',
+  '16':'Nehemiah','17':'Esther','18':'Job','19':'Psalms','20':'Proverbs',
+  '21':'Ecclesiastes','22':'Song of Solomon','23':'Isaiah','24':'Jeremiah',
+  '25':'Lamentations','26':'Ezekiel','27':'Daniel','28':'Hosea','29':'Joel',
+  '30':'Amos','31':'Obadiah','32':'Jonah','33':'Micah','34':'Nahum',
+  '35':'Habakkuk','36':'Zephaniah','37':'Haggai','38':'Zechariah','39':'Malachi',
+  '40':'Matthew','41':'Mark','42':'Luke','43':'John','44':'Acts','45':'Romans',
+  '46':'1 Corinthians','47':'2 Corinthians','48':'Galatians','49':'Ephesians',
+  '50':'Philippians','51':'Colossians','52':'1 Thessalonians','53':'2 Thessalonians',
+  '54':'1 Timothy','55':'2 Timothy','56':'Titus','57':'Philemon','58':'Hebrews',
+  '59':'James','60':'1 Peter','61':'2 Peter','62':'1 John','63':'2 John',
+  '64':'3 John','65':'Jude','66':'Revelation'
+};
+
+function parseVersionKey(key, orderBy) {
+  if (orderBy === 'source') {
+    // n40001001x / o010010010x — [0]=testament, [1-2]=book, [3-5]=chapter, [6-8]=verse
+    return {
+      bookNum: key.substring(1, 3),
+      chapter: parseInt(key.substring(3, 6)),
+      verse:   parseInt(key.substring(6, 9))
+    };
+  } else {
+    // 400010010 / 010010010 — [0-1]=book, [2-4]=chapter, [5-7]=verse
+    return {
+      bookNum: key.substring(0, 2),
+      chapter: parseInt(key.substring(2, 5)),
+      verse:   parseInt(key.substring(5, 8))
+    };
+  }
+}
+
+/* ---------- Utility ---------- */
+function parseTSV(tsv) {
+  const [header, ...lines] = tsv.trim().split('\n');
+  const keys = header.split('\t');
+  return lines.map(line => {
+    const values = line.split('\t');
+    return Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+  });
+}
+
+/* ---------- File Lists (Dynamic) ---------- */
+// These lists will be filled by scanning the server for files
+let alignmentFiles = [];
+let sourceFiles = [];
+let targetFiles = [];
+
+/* ---------- Populate Dropdowns ---------- */
+
+function populateSelect(id, files) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = '';
+  files.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f;
+    opt.textContent = f.split('/').slice(-3).join('/'); // Show last 3 parts for clarity
+    sel.appendChild(opt);
+  });
+}
+
+// Fetch directory listing from the server (requires http.server --directory listing enabled)
+async function fetchFileList(glob) {
+  // This is a workaround: we hardcode the lists found by the backend search
+  // In production, you would use an API or server-side script to list files
+  const jsonFiles = [
+    'data/arb/alignments/ONAV/SBLGNT-ONAV-manual.json',
+    'data/arb/alignments/AVD/WLCM-AVD-manual.json',
+    'data/arb/alignments/AVD/SBLGNT-AVD-manual.json',
+    'data/hau/alignments/OHCB/WLCM-OHCB-manual.json',
+    'data/hau/alignments/OHCB/SBLGNT-OHCB-manual.json',
+    'data/ben/alignments/IRVBen/SBLGNT-IRVBen-manual.json',
+    'data/por/alignments/JFA11/SBLGNT-JFA11-transfer.json',
+    'data/fra/alignments/LSG/SBLGNT-LSG-manual.json',
+    'data/fra/alignments/LSG/WLCM-LSG-manual.json',
+    'data/eng/alignments/BSB/SBLGNT-BSB-manual.json',
+    'data/eng/alignments/BSB/WLCM-BSB-manual.json',
+    'data/eng/alignments/BSB/BGNT-BSB-manual.json',
+    'data/rus/alignments/RUSSYN/SBLGNT-RUSSYN-manual.json',
+    'data/rus/alignments/RUSSYN/WLCM-RUSSYN-manual.json',
+    'data/asm/alignments/IRVAsm/SBLGNT-IRVAsm-manual.json',
+    'data/spa/alignments/RV09/WLCM-RV09-manual.json',
+    'data/spa/alignments/RV09/SBLGNT-RV09-manual.json',
+    'data/eng/alignments/YLT/WLC-YLT-manual.json',
+    'data/eng/alignments/YLT/SBLGNT-YLT-manual.json',
+    'data/hin/alignments/IRVHin/SBLGNT-IRVHin-manual.json'
+  ];
+  const tsvFiles = [
+    'data/arb/targets/ONAV/nt_ONAV.tsv',
+    'data/arb/targets/ONAV/ONAV_arabic_20240611.tsv',
+    'data/arb/targets/AVD/AVD_arabic_20240610.tsv',
+    'data/eng/targets/BSB/ot_BSB.tsv',
+    'data/eng/targets/YLT/ot_YLT.tsv',
+    'data/eng/targets/YLT/nt_YLT.tsv',
+    'data/eng/targets/BSB/nt_BSB.tsv',
+    'data/catalog.tsv',
+    'data/arb/targets/AVD/nt_AVD.tsv',
+    'data/arb/targets/AVD/ot_AVD.tsv',
+    'data/languages/strategic-languages.v10.tsv',
+    'data/rus/targets/RUSSYN/ot_RUSSYN.tsv',
+    'data/rus/targets/RUSSYN/nt_RUSSYN.tsv',
+    'data/hau/targets/OHCB/nt_OHCB.tsv',
+    'data/hau/targets/OHCB/ot_OHCB.tsv',
+    'data/fra/targets/LSG/ot_LSG.tsv',
+    'data/ben/targets/IRVBen/nt_IRVBen.tsv',
+    'data/legacy/targets/swh/ONEN/ONEN_swahili_20240610.tsv',
+    'data/legacy/targets/swh/ONEN/nt_ONEN.tsv',
+    'data/sources/SBLGNT.tsv',
+    'data/sources/WLC.tsv',
+    'data/sources/WLCM.tsv',
+    'data/sources/BGNT.tsv',
+    'data/sources/SBLGNT+required.tsv',
+    'data/sources/WLCM+required.tsv'
+  ];
+  if (glob === 'json') return jsonFiles;
+  if (glob === 'tsv') return tsvFiles;
+  return [];
+}
+
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Populate dropdowns with all available files
+  alignmentFiles = await fetchFileList('json');
+  const allTsv = await fetchFileList('tsv');
+  // Heuristics: source TSVs are in sources/, target TSVs are in targets/
+  sourceFiles = allTsv.filter(f => f.includes('/sources/') || f.match(/BGNT|SBLGNT|WLC|WLCM/));
+  targetFiles = allTsv.filter(f => f.includes('/targets/'));
+  populateSelect('alignmentSelect', alignmentFiles);
+  populateSelect('sourceSelect', sourceFiles);
+  populateSelect('targetSelect', targetFiles);
+});
+
+/* ---------- Main Load Logic ---------- */
+
+// --- PAGINATION LOGIC ---
+let paginationState = null;
+
+function renderAlignmentsPage(state) {
+  const output = document.getElementById('output');
+  output.innerHTML = '';
+  if (!state || !state.versions || !state.versionKeys.length) {
+    output.innerHTML = '<p style="color:red">No alignment records found for this selection.</p>';
+    return;
+  }
+  const version = state.versionKeys[state.currentVersionIdx];
+  output.innerHTML += `<h2>Version ${version}</h2>`;
+
+  // Build display rows including unaligned words for both modes
+  let displayRows;
+  if (state.orderBy === 'source' && state.sourceWordsByKey) {
+    const sourceWords = (state.sourceWordsByKey[version] || []).filter(w => !state.secondarySourceIds.has(w.id));
+    displayRows = sourceWords.map(w => {
+      const rec = state.primaryToRecord[w.id];
+      return rec ? {type: 'aligned', record: rec} : {type: 'unaligned', side: 'source', word: w};
+    }).filter(row => row.type === 'aligned' || !isPunctuation(row.word.text));
+  } else if (state.orderBy === 'target' && state.targetWordsByKey) {
+    const targetWords = (state.targetWordsByKey[version] || []).filter(w => !state.secondaryTargetIds.has(w.id));
+    displayRows = targetWords.map(w => {
+      const rec = state.minTargetToRecord[w.id];
+      return rec ? {type: 'aligned', record: rec} : {type: 'unaligned', side: 'target', word: w};
+    }).filter(row => row.type === 'aligned' || !isPunctuation(row.word.text));
+  } else {
+    displayRows = (state.versions[version] || []).map(r => ({type: 'aligned', record: r}));
+  }
+
+  const start = state.currentPage * state.pageSize;
+  const end = Math.min(displayRows.length, start + state.pageSize);
+  for (let i = start; i < end; ++i) {
+    const row = displayRows[i];
+    let src, tgt, rowStyle = '';
+    if (row.type === 'unaligned') {
+      const noAlign = '<span style="color:#aaa;font-style:italic">— no alignment —</span>';
+      src = row.side === 'source' ? renderSourceToken(row.word.id, state) : noAlign;
+      tgt = row.side === 'target' ? (row.word.text || `[${row.word.id}]`) : noAlign;
+      rowStyle = 'background:#fff8e1;';
+    } else {
+      const r = row.record;
+      src = Array.isArray(r.source) ? r.source.map(j => renderSourceToken(j, state)).join('') : '';
+      const sortedTgt = Array.isArray(r.target) ? [...r.target].sort() : [];
+      tgt = sortedTgt.map(j => state.targetById[j] || `[${j}]`).join(' ');
+    }
+    output.innerHTML += `
+      <div class="alignment" style="${rowStyle}">
+        <div class="side"><div class="tokens">${src}</div></div>
+        <div class="side"><div class="tokens">${tgt}</div></div>
+      </div>`;
+  }
+  // Pagination controls
+  output.innerHTML += `<div style="margin:20px 0;text-align:center;">
+    <button id="prevPageBtn" ${state.currentPage === 0 ? 'disabled' : ''}>Prev</button>
+    Page ${state.currentPage + 1} / ${Math.ceil(displayRows.length / state.pageSize)}
+    <button id="nextPageBtn" ${end >= displayRows.length ? 'disabled' : ''}>Next</button>
+  </div>`;
+  if (state.versionKeys.length > 1) {
+    output.innerHTML += `<div style="margin:10px 0;text-align:center;">
+      <button id="prevVerBtn" ${state.currentVersionIdx === 0 ? 'disabled' : ''}>Prev Version</button>
+      Version ${state.currentVersionIdx + 1} / ${state.versionKeys.length}
+      <button id="nextVerBtn" ${state.currentVersionIdx === state.versionKeys.length - 1 ? 'disabled' : ''}>Next Version</button>
+    </div>`;
+  }
+  // Button handlers
+  document.getElementById('prevPageBtn').onclick = () => {
+    state.currentPage--;
+    renderAlignmentsPage(state);
+  };
+  document.getElementById('nextPageBtn').onclick = () => {
+    state.currentPage++;
+    renderAlignmentsPage(state);
+  };
+  if (state.versionKeys.length > 1) {
+    document.getElementById('prevVerBtn').onclick = () => {
+      state.currentVersionIdx--;
+      state.currentPage = 0;
+      renderAlignmentsPage(state);
+    };
+    document.getElementById('nextVerBtn').onclick = () => {
+      state.currentVersionIdx++;
+      state.currentPage = 0;
+      renderAlignmentsPage(state);
+    };
+  }
+}
+
+function setupJumpControls(state) {
+  const jumpDiv = document.getElementById('jumpControls');
+  const bookSel  = document.getElementById('bookSelect');
+  const chapSel  = document.getElementById('chapterSelect');
+  const verseSel = document.getElementById('verseSelect');
+
+  // Build book → chapter → verses map from versionKeys
+  const tree = {};
+  state.versionKeys.forEach(key => {
+    const { bookNum, chapter, verse } = parseVersionKey(key, state.orderBy);
+    if (!tree[bookNum]) tree[bookNum] = {};
+    if (!tree[bookNum][chapter]) tree[bookNum][chapter] = new Set();
+    tree[bookNum][chapter].add(verse);
+  });
+
+  function populateVerses(bookNum, chapter) {
+    verseSel.innerHTML = '';
+    [...tree[bookNum][chapter]].sort((a, b) => a - b).forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      verseSel.appendChild(opt);
+    });
+  }
+
+  function populateChapters(bookNum) {
+    chapSel.innerHTML = '';
+    Object.keys(tree[bookNum]).sort((a, b) => a - b).forEach(ch => {
+      const opt = document.createElement('option');
+      opt.value = ch;
+      opt.textContent = ch;
+      chapSel.appendChild(opt);
+    });
+    populateVerses(bookNum, chapSel.value);
+  }
+
+  bookSel.innerHTML = '';
+  const sortedBooks = Object.keys(tree).sort();
+  const otBooks = sortedBooks.filter(b => parseInt(b) <= 39);
+  const ntBooks = sortedBooks.filter(b => parseInt(b) >= 40);
+
+  function appendBookGroup(books, groupLabel) {
+    if (!books.length) return;
+    const group = document.createElement('optgroup');
+    group.label = groupLabel;
+    books.forEach(bookNum => {
+      const opt = document.createElement('option');
+      opt.value = bookNum;
+      opt.textContent = BOOK_NAMES[bookNum] || bookNum;
+      group.appendChild(opt);
+    });
+    bookSel.appendChild(group);
+  }
+
+  appendBookGroup(otBooks, 'Old Testament');
+  appendBookGroup(ntBooks, 'New Testament');
+  populateChapters(bookSel.value);
+
+  bookSel.onchange  = () => populateChapters(bookSel.value);
+  chapSel.onchange  = () => populateVerses(bookSel.value, chapSel.value);
+
+  document.getElementById('goBtn').onclick = () => {
+    const bookNum = bookSel.value;
+    const chapter = parseInt(chapSel.value);
+    const verse   = parseInt(verseSel.value);
+    const targetKey = state.versionKeys.find(key => {
+      const p = parseVersionKey(key, state.orderBy);
+      return p.bookNum === bookNum && p.chapter === chapter && p.verse === verse;
+    });
+    if (targetKey === undefined) return;
+    state.currentVersionIdx = state.versionKeys.indexOf(targetKey);
+    state.currentPage = 0;
+    renderAlignmentsPage(state);
+    document.getElementById('output').scrollIntoView({ behavior: 'smooth' });
+  };
+
+  jumpDiv.style.display = '';
+}
+
+/* ---------- Build Version Map ---------- */
+function buildVersionMap(records, orderBy) {
+  const versionMap = {};
+  records.forEach(r => {
+    if (orderBy === 'target') {
+      if (!r.target || !Array.isArray(r.target) || r.target.length === 0) return;
+      const minTgt = [...r.target].sort()[0];
+      const version = minTgt.substring(0, 9);
+      versionMap[version] = versionMap[version] || [];
+      versionMap[version].push(r);
+    } else {
+      if (!r.source || !Array.isArray(r.source) || r.source.length === 0) return;
+      const version = r.source[0].substring(0, 10);
+      versionMap[version] = versionMap[version] || [];
+      versionMap[version].push(r);
+    }
+  });
+  Object.values(versionMap).forEach(recs => {
+    recs.sort((a, b) => {
+      const aId = orderBy === 'target' ? ([...a.target].sort()[0] || '') : (a.source[0] || '');
+      const bId = orderBy === 'target' ? ([...b.target].sort()[0] || '') : (b.source[0] || '');
+      return aId < bId ? -1 : aId > bId ? 1 : 0;
+    });
+  });
+  return { versionMap, versionKeys: Object.keys(versionMap).sort() };
+}
+
+/* ---------- Reactive View Order ---------- */
+function changeViewOrder(newOrderBy) {
+  if (!paginationState) return;
+  const currentKey = paginationState.versionKeys[paginationState.currentVersionIdx];
+  const { bookNum, chapter, verse } = parseVersionKey(currentKey, paginationState.orderBy);
+  const { versionMap, versionKeys } = buildVersionMap(paginationState.alignmentRecords, newOrderBy);
+  if (!versionKeys.length) return;
+  const matchIdx = versionKeys.findIndex(key => {
+    const p = parseVersionKey(key, newOrderBy);
+    return p.bookNum === bookNum && p.chapter === chapter && p.verse === verse;
+  });
+  paginationState.versions = versionMap;
+  paginationState.versionKeys = versionKeys;
+  paginationState.orderBy = newOrderBy;
+  paginationState.currentVersionIdx = matchIdx >= 0 ? matchIdx : 0;
+  paginationState.currentPage = 0;
+  setupJumpControls(paginationState);
+  renderAlignmentsPage(paginationState);
+}
+
+document.querySelectorAll('input[name="viewOrder"]').forEach(radio => {
+  radio.addEventListener('change', () => changeViewOrder(radio.value));
+});
+
+document.getElementById('loadBtn').addEventListener('click', async () => {
+  const output = document.getElementById('output');
+  output.innerHTML = '<em>Loading...</em>';
+
+  const aSel = document.getElementById('alignmentSelect');
+  const sSel = document.getElementById('sourceSelect');
+  const tSel = document.getElementById('targetSelect');
+  const aPath = aSel.value;
+  const sPath = sSel.value;
+  const tPath = tSel.value;
+
+  if (!aPath || !sPath || !tPath) {
+    output.innerHTML = '';
+    alert('Please select all files.');
+    return;
+  }
+
+  try {
+    const [aRes, sRes, tRes] = await Promise.all([
+      fetch(aPath),
+      fetch(sPath),
+      fetch(tPath)
+    ]);
+    if (!aRes.ok) throw new Error('Failed to fetch alignment file: ' + aPath);
+    if (!sRes.ok) throw new Error('Failed to fetch source file: ' + sPath);
+    if (!tRes.ok) throw new Error('Failed to fetch target file: ' + tPath);
+
+    let alignment, source, target;
+    try {
+      alignment = await aRes.json();
+    } catch (e) {
+      throw new Error('Failed to parse alignment JSON: ' + e.message);
+    }
+    try {
+      source = parseTSV(await sRes.text());
+    } catch (e) {
+      throw new Error('Failed to parse source TSV: ' + e.message);
+    }
+    try {
+      target = parseTSV(await tRes.text());
+    } catch (e) {
+      throw new Error('Failed to parse target TSV: ' + e.message);
+    }
+
+    if (!Array.isArray(source) || !source[0] || !('id' in source[0]) || !('text' in source[0])) {
+      throw new Error('Source TSV missing required columns (id, text).');
+    }
+    if (!Array.isArray(target) || !target[0] || !('id' in target[0]) || !('text' in target[0])) {
+      throw new Error('Target TSV missing required columns (id, text).');
+    }
+    if (!alignment.records || !Array.isArray(alignment.records)) {
+      throw new Error('Alignment JSON missing records array.');
+    }
+
+    const sourceById = Object.fromEntries(source.map(t => [t.id, t.text]));
+    const sourceStrongsById = Object.fromEntries(source.map(t => [t.id, t.strongs || '']));
+    const targetById = Object.fromEntries(target.map(t => [t.id, t.text]));
+
+    // Build source-word verse index and alignment lookup (for showing unaligned words)
+    const sourceWordsByKey = {};
+    source.forEach(row => {
+      const key = row.id.substring(0, 10);
+      sourceWordsByKey[key] = sourceWordsByKey[key] || [];
+      sourceWordsByKey[key].push(row);
+    });
+    Object.values(sourceWordsByKey).forEach(arr => arr.sort((a, b) => a.id < b.id ? -1 : 1));
+
+    const primaryToRecord = {};
+    const secondarySourceIds = new Set();
+    alignment.records.forEach(r => {
+      if (!r.source || r.source.length === 0) return;
+      primaryToRecord[r.source[0]] = r;
+      for (let i = 1; i < r.source.length; i++) secondarySourceIds.add(r.source[i]);
+    });
+
+    // Build target-word verse index and alignment lookup (for showing unaligned target words)
+    const targetWordsByKey = {};
+    target.forEach(row => {
+      const key = row.id.substring(0, 9);
+      targetWordsByKey[key] = targetWordsByKey[key] || [];
+      targetWordsByKey[key].push(row);
+    });
+    Object.values(targetWordsByKey).forEach(arr => arr.sort((a, b) => a.id < b.id ? -1 : 1));
+
+    const minTargetToRecord = {};
+    const secondaryTargetIds = new Set();
+    alignment.records.forEach(r => {
+      if (!r.target || r.target.length === 0) return;
+      const sorted = [...r.target].sort();
+      minTargetToRecord[sorted[0]] = r;
+      for (let i = 1; i < sorted.length; i++) secondaryTargetIds.add(sorted[i]);
+    });
+
+    // Group by verse, keyed by source or target depending on view order
+    const orderBy = document.querySelector('input[name="viewOrder"]:checked').value;
+    const { versionMap, versionKeys } = buildVersionMap(alignment.records, orderBy);
+    if (!versionKeys.length) {
+      output.innerHTML = '<p style="color:red">No alignment records found for this selection.</p>';
+      return;
+    }
+    paginationState = {
+      versions: versionMap,
+      versionKeys: versionKeys,
+      currentVersionIdx: 0,
+      currentPage: 0,
+      pageSize: 10,
+      sourceById,
+      sourceStrongsById,
+      targetById,
+      orderBy,
+      sourceWordsByKey,
+      primaryToRecord,
+      secondarySourceIds,
+      targetWordsByKey,
+      minTargetToRecord,
+      secondaryTargetIds,
+      alignmentRecords: alignment.records
+    };
+    setupJumpControls(paginationState);
+    renderAlignmentsPage(paginationState);
+  } catch (e) {
+    console.error(e);
+    output.innerHTML = `<p style="color:red">${e.message || 'Failed to load files.'}</p>`;
+  }
+});
+</script>
+</body>
+</html>
