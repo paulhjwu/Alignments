@@ -15,14 +15,14 @@ from warnings import warn
 
 import tomli
 
-from bible_alignments import config
+from bible_alignments import ALIGNMENTS, DATAPATH
 
 
 class Catalog:
     """Manage data across all the alignments."""
 
-    alignments: Path = config.ALIGNMENTS
-    catalogpath: Path = config.DATAPATH / "catalog.tsv"
+    alignments: Path = ALIGNMENTS
+    catalogpath: Path = DATAPATH / "catalog.tsv"
     # Standard metadata attributes: warn if not present
     stdattrs: dict[str, dict[str, str]] = {
         "alignment": ["format", "identifier", "license", "process", "scope", "team"],

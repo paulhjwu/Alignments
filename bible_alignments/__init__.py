@@ -14,6 +14,8 @@ SRCPATH = ROOT / "src"
 
 SOURCES = DATAPATH / "sources"
 NAMES = DATAPATH / "names"
+ALIGNMENTS = DATAPATH / "alignments"
+TARGETS = DATAPATH / "targets"
 
 
 CANONIDS = {
