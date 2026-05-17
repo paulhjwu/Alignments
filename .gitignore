@@ -24,6 +24,9 @@ dist/
 .ipynb_checkpoints/
 .pytest_cache/
 
+# ignore notebook output changes
+*.ipynb
+
 # ignore non-publishable data
 data/raw
 lexicon/
