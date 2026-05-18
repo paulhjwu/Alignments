@@ -161,6 +161,11 @@ function attrEsc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+function tokenIdx(id) {
+  return parseInt(id.slice(-3), 10);
+}
+const IDX_STYLE = 'font-size:0.68em;color:#aaa;font-weight:normal;vertical-align:super;margin-right:1px';
+
 function renderSourceToken(id, state) {
   const text    = state.sourceById[id]        || `[${id}]`;
   const strongs = state.sourceStrongsById     ? (state.sourceStrongsById[id]  || '') : '';
@@ -168,14 +173,15 @@ function renderSourceToken(id, state) {
   const lemma   = state.sourceLemmaById       ? (state.sourceLemmaById[id]    || '') : '';
   const pos     = state.sourcePosById         ? (state.sourcePosById[id]      || '') : '';
   const morph   = state.sourceMorphById       ? (state.sourceMorphById[id]    || '') : '';
+  const idx     = `<span style="${IDX_STYLE}">${tokenIdx(id)}</span>`;
   if (strongs) {
     const ctx = `data-word="${attrEsc(text)}" data-gloss="${attrEsc(gloss)}" data-lemma="${attrEsc(lemma)}" data-pos="${attrEsc(pos)}" data-morph="${attrEsc(morph)}"`;
     const linksHtml = strongs.split('+').filter(Boolean).map(s =>
       `<a class="strongs-link" data-ref="${s.trim()}" ${ctx} href="#">${s.trim()}</a>`
     ).join(' ');
-    return `<span style="display:inline-block;text-align:center;margin-right:6px">${text}<br><small style="font-size:0.8em">${linksHtml}</small></span>`;
+    return `<span style="display:inline-block;text-align:center;margin-right:6px">${idx}${text}<br><small style="font-size:0.8em">${linksHtml}</small></span>`;
   }
-  return `<span style="margin-right:6px">${text}</span>`;
+  return `<span style="margin-right:6px">${idx}${text}</span>`;
 }
 
 /* ---------- Book Names ---------- */
@@ -355,13 +361,17 @@ function renderAlignmentsPage(state) {
     if (row.type === 'unaligned') {
       const noAlign = '<span style="color:#aaa;font-style:italic">— no alignment —</span>';
       src = row.side === 'source' ? renderSourceToken(row.word.id, state) : noAlign;
-      tgt = row.side === 'target' ? (row.word.text || `[${row.word.id}]`) : noAlign;
+      tgt = row.side === 'target'
+        ? `<span style="margin-right:4px"><span style="${IDX_STYLE}">${tokenIdx(row.word.id)}</span>${row.word.text || `[${row.word.id}]`}</span>`
+        : noAlign;
       rowStyle = 'background:#fff8e1;';
     } else {
       const r = row.record;
       src = Array.isArray(r.source) ? r.source.map(j => renderSourceToken(j, state)).join('') : '';
       const sortedTgt = Array.isArray(r.target) ? [...r.target].sort() : [];
-      tgt = sortedTgt.map(j => state.targetById[j] || `[${j}]`).join(' ');
+      tgt = sortedTgt.map(j =>
+        `<span style="margin-right:4px"><span style="${IDX_STYLE}">${tokenIdx(j)}</span>${state.targetById[j] || `[${j}]`}</span>`
+      ).join('');
     }
     output.innerHTML += `
       <div class="alignment" style="${rowStyle}">
