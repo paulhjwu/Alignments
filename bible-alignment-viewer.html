@@ -850,9 +850,16 @@ async function renderModal() {
 
 async function openLexiconModal(ref, wordCtx) {
   const m = String(ref).match(/^([GHgh])(\d+)$/);
-  if (!m) return;
-  modalLang    = m[1].toUpperCase();
-  modalNum     = parseInt(m[2], 10);
+  if (m) {
+    modalLang = m[1].toUpperCase();
+    modalNum  = parseInt(m[2], 10);
+  } else {
+    // Hebrew Strong's numbers lack H prefix (e.g. "0871a", "7225")
+    const mH = String(ref).match(/^(\d+)[a-z]?$/);
+    if (!mH) return;
+    modalLang = 'H';
+    modalNum  = parseInt(mH[1], 10);
+  }
   modalWordCtx = wordCtx || null;
   await renderModal();
   document.getElementById('lexiconModal').style.display = 'block';
