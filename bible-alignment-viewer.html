@@ -109,14 +109,11 @@
 <div class="container">
   <h1>Bible Alignment Viewer</h1>
 
-  <label>Alignment JSON:</label><br>
-  <select id="alignmentSelect"></select><br><br>
+  <label>Bible Version:</label><br>
+  <select id="bibleVersionSelect"></select><br><br>
 
-  <label>Source TSV:</label><br>
-  <select id="sourceSelect"></select><br><br>
-
-  <label>Target TSV:</label><br>
-  <select id="targetSelect"></select><br><br>
+  <label>Testament:</label><br>
+  <select id="testamentSelect"></select><br><br>
 
   <label>View order:</label>
   <label><input type="radio" name="viewOrder" value="source" checked> Source</label>
@@ -230,94 +227,70 @@ function parseTSV(tsv) {
   });
 }
 
-/* ---------- File Lists (Dynamic) ---------- */
-// These lists will be filled by scanning the server for files
-let alignmentFiles = [];
-let sourceFiles = [];
-let targetFiles = [];
+/* ---------- Bible Version / Testament Config ---------- */
+// Only BSB and YLT are offered, each restricted to its SBLGNT (NT) / WLC(M) (OT)
+// alignment — BSB's third alignment (against BGNT) is intentionally excluded.
+const BIBLE_VERSIONS = {
+  BSB: {
+    label: 'Berean Standard Bible (BSB)',
+    testaments: {
+      OT: {
+        label: 'Old Testament (WLCM)',
+        alignment: 'data/eng/alignments/BSB/WLCM-BSB-manual.json',
+        source:    'data/sources/WLCM.tsv',
+        target:    'data/eng/targets/BSB/ot_BSB.tsv'
+      },
+      NT: {
+        label: 'New Testament (SBLGNT)',
+        alignment: 'data/eng/alignments/BSB/SBLGNT-BSB-manual.json',
+        source:    'data/sources/SBLGNT.tsv',
+        target:    'data/eng/targets/BSB/nt_BSB.tsv'
+      }
+    }
+  },
+  YLT: {
+    label: "Young's Literal Translation (YLT)",
+    testaments: {
+      OT: {
+        label: 'Old Testament (WLC)',
+        alignment: 'data/eng/alignments/YLT/WLC-YLT-manual.json',
+        source:    'data/sources/WLC.tsv',
+        target:    'data/eng/targets/YLT/ot_YLT.tsv'
+      },
+      NT: {
+        label: 'New Testament (SBLGNT)',
+        alignment: 'data/eng/alignments/YLT/SBLGNT-YLT-manual.json',
+        source:    'data/sources/SBLGNT.tsv',
+        target:    'data/eng/targets/YLT/nt_YLT.tsv'
+      }
+    }
+  }
+};
 
 /* ---------- Populate Dropdowns ---------- */
 
-function populateSelect(id, files) {
-  const sel = document.getElementById(id);
+function populateTestamentSelect(versionKey) {
+  const sel = document.getElementById('testamentSelect');
   sel.innerHTML = '';
-  files.forEach(f => {
+  Object.entries(BIBLE_VERSIONS[versionKey].testaments).forEach(([key, cfg]) => {
     const opt = document.createElement('option');
-    opt.value = f;
-    opt.textContent = f.split('/').slice(-3).join('/'); // Show last 3 parts for clarity
+    opt.value = key;
+    opt.textContent = cfg.label;
     sel.appendChild(opt);
   });
 }
 
-// Fetch directory listing from the server (requires http.server --directory listing enabled)
-async function fetchFileList(glob) {
-  // This is a workaround: we hardcode the lists found by the backend search
-  // In production, you would use an API or server-side script to list files
-  const jsonFiles = [
-    'data/arb/alignments/ONAV/SBLGNT-ONAV-manual.json',
-    'data/arb/alignments/AVD/WLCM-AVD-manual.json',
-    'data/arb/alignments/AVD/SBLGNT-AVD-manual.json',
-    'data/hau/alignments/OHCB/WLCM-OHCB-manual.json',
-    'data/hau/alignments/OHCB/SBLGNT-OHCB-manual.json',
-    'data/ben/alignments/IRVBen/SBLGNT-IRVBen-manual.json',
-    'data/por/alignments/JFA11/SBLGNT-JFA11-transfer.json',
-    'data/fra/alignments/LSG/SBLGNT-LSG-manual.json',
-    'data/fra/alignments/LSG/WLCM-LSG-manual.json',
-    'data/eng/alignments/BSB/SBLGNT-BSB-manual.json',
-    'data/eng/alignments/BSB/WLCM-BSB-manual.json',
-    'data/eng/alignments/BSB/BGNT-BSB-manual.json',
-    'data/rus/alignments/RUSSYN/SBLGNT-RUSSYN-manual.json',
-    'data/rus/alignments/RUSSYN/WLCM-RUSSYN-manual.json',
-    'data/asm/alignments/IRVAsm/SBLGNT-IRVAsm-manual.json',
-    'data/spa/alignments/RV09/WLCM-RV09-manual.json',
-    'data/spa/alignments/RV09/SBLGNT-RV09-manual.json',
-    'data/eng/alignments/YLT/WLC-YLT-manual.json',
-    'data/eng/alignments/YLT/SBLGNT-YLT-manual.json',
-    'data/hin/alignments/IRVHin/SBLGNT-IRVHin-manual.json'
-  ];
-  const tsvFiles = [
-    'data/arb/targets/ONAV/nt_ONAV.tsv',
-    'data/arb/targets/ONAV/ONAV_arabic_20240611.tsv',
-    'data/arb/targets/AVD/AVD_arabic_20240610.tsv',
-    'data/eng/targets/BSB/ot_BSB.tsv',
-    'data/eng/targets/YLT/ot_YLT.tsv',
-    'data/eng/targets/YLT/nt_YLT.tsv',
-    'data/eng/targets/BSB/nt_BSB.tsv',
-    'data/catalog.tsv',
-    'data/arb/targets/AVD/nt_AVD.tsv',
-    'data/arb/targets/AVD/ot_AVD.tsv',
-    'data/languages/strategic-languages.v10.tsv',
-    'data/rus/targets/RUSSYN/ot_RUSSYN.tsv',
-    'data/rus/targets/RUSSYN/nt_RUSSYN.tsv',
-    'data/hau/targets/OHCB/nt_OHCB.tsv',
-    'data/hau/targets/OHCB/ot_OHCB.tsv',
-    'data/fra/targets/LSG/ot_LSG.tsv',
-    'data/ben/targets/IRVBen/nt_IRVBen.tsv',
-    'data/legacy/targets/swh/ONEN/ONEN_swahili_20240610.tsv',
-    'data/legacy/targets/swh/ONEN/nt_ONEN.tsv',
-    'data/sources/SBLGNT.tsv',
-    'data/sources/WLC.tsv',
-    'data/sources/WLCM.tsv',
-    'data/sources/BGNT.tsv',
-    'data/sources/SBLGNT+required.tsv',
-    'data/sources/WLCM+required.tsv'
-  ];
-  if (glob === 'json') return jsonFiles;
-  if (glob === 'tsv') return tsvFiles;
-  return [];
-}
-
-
-document.addEventListener('DOMContentLoaded', async () => {
-  // Populate dropdowns with all available files
-  alignmentFiles = await fetchFileList('json');
-  const allTsv = await fetchFileList('tsv');
-  // Heuristics: source TSVs are in sources/, target TSVs are in targets/
-  sourceFiles = allTsv.filter(f => f.includes('/sources/') || f.match(/BGNT|SBLGNT|WLC|WLCM/));
-  targetFiles = allTsv.filter(f => f.includes('/targets/'));
-  populateSelect('alignmentSelect', alignmentFiles);
-  populateSelect('sourceSelect', sourceFiles);
-  populateSelect('targetSelect', targetFiles);
+document.addEventListener('DOMContentLoaded', () => {
+  const versionSel = document.getElementById('bibleVersionSelect');
+  versionSel.innerHTML = '';
+  Object.entries(BIBLE_VERSIONS).forEach(([key, cfg]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = cfg.label;
+    versionSel.appendChild(opt);
+  });
+  populateTestamentSelect(versionSel.value);
+  versionSel.addEventListener('change', () => populateTestamentSelect(versionSel.value));
 });
 
 /* ---------- Main Load Logic ---------- */
@@ -549,18 +522,18 @@ document.getElementById('loadBtn').addEventListener('click', async () => {
   const output = document.getElementById('output');
   output.innerHTML = '<em>Loading...</em>';
 
-  const aSel = document.getElementById('alignmentSelect');
-  const sSel = document.getElementById('sourceSelect');
-  const tSel = document.getElementById('targetSelect');
-  const aPath = aSel.value;
-  const sPath = sSel.value;
-  const tPath = tSel.value;
+  const versionKey    = document.getElementById('bibleVersionSelect').value;
+  const testamentKey  = document.getElementById('testamentSelect').value;
+  const cfg = BIBLE_VERSIONS[versionKey] && BIBLE_VERSIONS[versionKey].testaments[testamentKey];
 
-  if (!aPath || !sPath || !tPath) {
+  if (!cfg) {
     output.innerHTML = '';
-    alert('Please select all files.');
+    alert('Please select a Bible version and testament.');
     return;
   }
+  const aPath = cfg.alignment;
+  const sPath = cfg.source;
+  const tPath = cfg.target;
 
   try {
     const [aRes, sRes, tRes] = await Promise.all([
