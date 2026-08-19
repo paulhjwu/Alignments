@@ -1,0 +1,53 @@
+# Deployment for srv1798889.hstgr.cloud, where another project's Caddy already
+# owns :80/:443 (the treebank site, itself proxied the same way — see that
+# repo's docker-compose.vps.yml). This stack publishes NO ports and terminates
+# no TLS: the existing Caddy reverse-proxies /alignments/* to it over a shared
+# Docker network, so the site reuses that Caddy's certificate for the hostname.
+#
+# Use docker-compose.yml instead for local development or a host where this app
+# owns ports 80/443.
+
+# Pinned so the project name never derives from the checkout directory. A
+# checkout in /opt/alignments would otherwise yield the project name
+# "alignments" — pinning it to "alignment" keeps the container name matching
+# what the front Caddy's reverse_proxy target expects.
+name: alignment
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: alignment
+    restart: unless-stopped
+    networks:
+      - edge
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - .:/srv:ro
+
+networks:
+  # The network the front Caddy is already attached to; see `docker network ls`.
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:?set EDGE_NETWORK to the front Caddy container's network}
+
+configs:
+  caddyfile:
+    content: |
+      # Plain HTTP on the internal network only — the front Caddy handles TLS.
+      :80 {
+          root * /srv
+          encode zstd gzip
+          file_server
+          # No rewrite needed: file_server already serves index.html for "/",
+          # and index.html links to both bible-alignment-viewer.html and
+          # lexicon-browser.html — there's no single entry page here to force.
+          # Named matcher: a bare `*.json` token would parse as the
+          # three-argument header-replacement form and silently do nothing.
+          @cacheable path *.json *.tsv *.md
+          header @cacheable Cache-Control "public, max-age=86400"
+          header /index.html Cache-Control "no-cache"
+          header /bible-alignment-viewer.html Cache-Control "no-cache"
+          header /lexicon-browser.html Cache-Control "no-cache"
+      }

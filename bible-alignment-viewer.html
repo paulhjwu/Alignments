@@ -849,13 +849,17 @@ async function renderModal() {
 }
 
 async function openLexiconModal(ref, wordCtx) {
-  const m = String(ref).match(/^([GHgh])(\d+)$/);
+  const refStr = String(ref);
+  const m = refStr.match(/^([GHgh])(\d+)$/);
   if (m) {
     modalLang = m[1].toUpperCase();
     modalNum  = parseInt(m[2], 10);
   } else {
-    // Hebrew Strong's numbers lack H prefix (e.g. "0871a", "7225")
-    const mH = String(ref).match(/^(\d+)[a-z]?$/);
+    // Hebrew Strong's numbers sometimes lack the H prefix (e.g. "7225").
+    // A trailing letter (e.g. "0871a", "2050b") marks a sub-entry with no
+    // standalone lexicon page — skip those instead of silently opening the
+    // base number's entry.
+    const mH = refStr.match(/^(\d+)$/);
     if (!mH) return;
     modalLang = 'H';
     modalNum  = parseInt(mH[1], 10);
